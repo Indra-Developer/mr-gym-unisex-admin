@@ -4,11 +4,6 @@ import { ArrowLeft, Camera, Loader2 } from 'lucide-react';
 import { addMember, getMember, updateMember } from '../services/members';
 import { getPlans, type Plan } from '../services/settings';
 
-// --- NEW IMPORTS FOR TRANSACTION FIX ---
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../services/firebase';
-import { recordPayment } from '../services/payments';
-
 export const MemberForm: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -26,8 +21,6 @@ export const MemberForm: React.FC = () => {
     fullName: '', mobileNumber: '', email: '', dateOfBirth: '',
     gender: 'Male', planType: '', accessShift: 'Morning',
     startDate: new Date().toISOString().split('T')[0], expiryDate: '',
-    totalFee: 0, discount: 0, amountPaid: 0,
-    paymentMode: 'Cash' // Added so the background transaction has a mode
   });
 
   // Load Database Plans & Member Data
@@ -37,9 +30,7 @@ export const MemberForm: React.FC = () => {
       if (!isEditMode && fetchedPlans.length > 0) {
         setFormData(prev => ({ 
           ...prev, 
-          planType: fetchedPlans[0].name,
-          totalFee: fetchedPlans[0].price,
-          amountPaid: fetchedPlans[0].price
+          planType: fetchedPlans[0].name
         }));
       }
     });
@@ -50,11 +41,15 @@ export const MemberForm: React.FC = () => {
           setMembershipId(member.membershipId);
           setProfilePicPreview(member.profilePicUrl);
           setFormData({
-            fullName: member.fullName, mobileNumber: member.mobileNumber, email: member.email || '',
-            dateOfBirth: member.dateOfBirth, gender: member.gender, planType: member.planType,
-            accessShift: member.accessShift, startDate: member.startDate, expiryDate: member.expiryDate,
-            totalFee: member.totalFee, discount: member.discount, amountPaid: member.amountPaid,
-            paymentMode: 'Cash'
+            fullName: member.fullName, 
+            mobileNumber: member.mobileNumber, 
+            email: member.email || '',
+            dateOfBirth: member.dateOfBirth || '', 
+            gender: member.gender || 'Male', 
+            planType: member.planType || '',
+            accessShift: member.accessShift || 'Morning', 
+            startDate: member.startDate || '', 
+            expiryDate: member.expiryDate || '',
           });
         }
         setLoading(false);
@@ -71,18 +66,13 @@ export const MemberForm: React.FC = () => {
   };
 
   const handlePlanChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedPlanName = e.target.value;
-    const selectedPlan = plans.find(p => p.name === selectedPlanName);
-    
     setFormData(prev => ({
       ...prev,
-      planType: selectedPlanName,
-      totalFee: selectedPlan ? selectedPlan.price : prev.totalFee,
-      amountPaid: selectedPlan ? selectedPlan.price : prev.amountPaid,
-      discount: 0
+      planType: e.target.value
     }));
   };
 
+  // Auto-calculate Expiry Date
   useEffect(() => {
     if (!formData.startDate || plans.length === 0) return;
     const start = new Date(formData.startDate);
@@ -104,52 +94,34 @@ export const MemberForm: React.FC = () => {
     setFormData(prev => ({ ...prev, expiryDate: expiry.toISOString().split('T')[0] }));
   }, [formData.startDate, formData.planType, plans]);
 
-  const balanceDue = Math.max(0, formData.totalFee - formData.discount - formData.amountPaid);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      const payload = { 
+      // Base payload without profilePicUrl (to avoid Firestore undefined error)
+      const payload: any = { 
         ...formData, 
-        membershipId, 
-        balanceDue, 
-        status: 'Active' as const, 
-        profilePicUrl: isEditMode ? undefined : null 
+        membershipId,
+        status: 'Active'
       };
       
       if (isEditMode && id) {
         await updateMember(id, payload, profilePic);
         navigate(`/members/${id}`); 
       } else {
-        // 1. Create the member profile
-        await addMember(payload as any, profilePic);
+        // Set profilePicUrl to null explicitly for new members
+        payload.profilePicUrl = null;
+        payload.balanceDue = 0; // Initialize with 0 balance
+        payload.amountPaid = 0;
+        payload.totalFee = 0;
         
-        // 2. FIX: Automatically create a proper transaction record if money was collected!
-        if (formData.amountPaid > 0) {
-           const membersRef = collection(db, 'members');
-           const q = query(membersRef, where('membershipId', '==', membershipId));
-           const snapshot = await getDocs(q);
-           
-           if (!snapshot.empty) {
-              const newMemberDocId = snapshot.docs[0].id;
-              await recordPayment({
-                memberId: newMemberDocId,
-                memberName: formData.fullName,
-                membershipId: membershipId,
-                transactionDate: formData.startDate,
-                paymentMode: formData.paymentMode as any,
-                totalFee: formData.totalFee,
-                discount: formData.discount,
-                amountPaid: formData.amountPaid,
-                balanceDue: balanceDue
-              });
-           }
-        }
+        await addMember(payload, profilePic);
         navigate('/members');
       }
     } catch (error) {
-      alert(`Failed to ${isEditMode ? 'update' : 'create'} member`);
+      console.error(error);
+      alert(`Failed to ${isEditMode ? 'update' : 'create'} member. Check console for details.`);
     } finally {
       setSaving(false);
     }
@@ -218,48 +190,11 @@ export const MemberForm: React.FC = () => {
           </div>
         </div>
 
-        {/* --- FIXED PAYMENT SECTION --- */}
-        <div className="bg-white p-5 rounded-xl border border-[#E5E7EB] shadow-sm space-y-4">
-          <div className="flex justify-between items-center border-b pb-2">
-            <h2 className="font-bold text-[#1F2937]">Initial Payment</h2>
-            {isEditMode && <span className="text-[10px] uppercase tracking-wider font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded">Read Only (Edit via Payments)</span>}
-          </div>
-          
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            <div className="lg:col-span-1">
-              <label className="block text-xs font-medium text-[#6B7280] mb-1">Total Fee (₹)</label>
-              <input type="number" required value={formData.totalFee} onChange={e => setFormData({...formData, totalFee: Number(e.target.value)})} disabled={isEditMode} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none focus:border-[#2563EB] disabled:bg-gray-50 disabled:text-gray-500" />
-            </div>
-            <div className="lg:col-span-1">
-              <label className="block text-xs font-medium text-[#6B7280] mb-1">Discount (₹)</label>
-              <input type="number" value={formData.discount} onChange={e => setFormData({...formData, discount: Number(e.target.value)})} disabled={isEditMode} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none focus:border-[#2563EB] disabled:bg-gray-50 disabled:text-gray-500" />
-            </div>
-            <div className="lg:col-span-1">
-              <label className="block text-xs font-medium text-[#6B7280] mb-1">Amount Paid (₹)</label>
-              <input type="number" required value={formData.amountPaid} onChange={e => setFormData({...formData, amountPaid: Number(e.target.value)})} disabled={isEditMode} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none focus:border-[#2563EB] disabled:bg-gray-50 disabled:text-gray-500" />
-            </div>
-            
-            <div className="lg:col-span-1">
-              <label className="block text-xs font-medium text-[#6B7280] mb-1">Payment Mode</label>
-              <select value={formData.paymentMode} onChange={e => setFormData({...formData, paymentMode: e.target.value})} disabled={isEditMode} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none bg-white focus:border-[#2563EB] disabled:bg-gray-50 disabled:text-gray-500">
-                <option>Cash</option>
-                <option>UPI</option>
-                <option>Card</option>
-                <option>Bank Transfer</option>
-              </select>
-            </div>
-            
-            <div className="lg:col-span-1 text-center lg:text-left border-t lg:border-t-0 pt-3 lg:pt-0 col-span-2 lg:col-span-1">
-              <label className="block text-xs font-medium text-[#6B7280] mb-1">Balance Due (₹)</label>
-              <input type="number" readOnly value={balanceDue} className={`w-full h-11 px-3 rounded-lg border font-bold outline-none ${balanceDue > 0 ? 'border-red-200 bg-red-50 text-red-600' : 'border-gray-200 bg-gray-50 text-gray-500'}`} />
-            </div>
-          </div>
-        </div>
-
         <div className="flex gap-3 sm:justify-end pt-2">
           <button type="button" onClick={() => navigate(-1)} className="flex-1 sm:flex-none h-12 px-6 rounded-lg font-medium text-[#6B7280] border border-[#E5E7EB] bg-white hover:bg-gray-50">Cancel</button>
           <button type="submit" disabled={saving} className="flex-1 sm:flex-none h-12 px-8 rounded-lg font-medium text-white bg-[#2563EB] hover:bg-[#1D4ED8] flex items-center justify-center">
-            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : (isEditMode ? 'Save Changes' : 'Create Member')}
+            {saving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
+            {isEditMode ? 'Save Changes' : 'Create Member'}
           </button>
         </div>
       </form>
