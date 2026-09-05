@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Printer, Download, Mail, MessageCircle, Loader2 } from 'lucide-react';
 import { Document, Page, Text, View, StyleSheet, Image, PDFDownloadLink } from '@react-pdf/renderer';
 import { getPayment, getPaymentWhatsAppLink, type Payment } from '../services/payments';
-import { getMember } from '../services/members';
+import { getMember, type Member } from '../services/members';
 
 // --- PDF STYLES ---
 const styles = StyleSheet.create({
@@ -22,7 +22,8 @@ const styles = StyleSheet.create({
   tableCol1: { flex: 1, fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#1F2937' },
   tableCol2: { width: 100, textAlign: 'right', fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#1F2937' },
   tableRow: { flexDirection: 'row', paddingVertical: 10 },
-  tableCell1: { flex: 1, fontSize: 10, color: '#4B5563' },
+  tableCell1Main: { fontSize: 10, fontFamily: 'Helvetica-Bold', color: '#1F2937' },
+  tableCell1Sub: { fontSize: 8, color: '#6B7280', marginTop: 3 },
   tableCell2: { width: 100, textAlign: 'right', fontSize: 10, color: '#1F2937' },
   summaryContainer: { alignItems: 'flex-end', marginTop: 20 },
   summaryBox: { width: 220 },
@@ -37,12 +38,11 @@ const styles = StyleSheet.create({
 });
 
 // --- PDF DOCUMENT TEMPLATE ---
-const InvoicePDFDocument = ({ payment, phone }: { payment: Payment, phone: string }) => (
+const InvoicePDFDocument = ({ payment, member }: { payment: Payment, member: Member | null }) => (
   <Document>
     <Page size="A4" style={styles.page}>
       
       <View style={styles.header}>
-        {/* Make sure logo.png is in your public folder */}
         <Image src="/logo.png" style={styles.logo} />
         <Text style={styles.title}>MR GYM UNISEX</Text>
         <Text style={styles.subText}>1st floor, AAA Complex, above Reliance Smart point,</Text>
@@ -54,16 +54,18 @@ const InvoicePDFDocument = ({ payment, phone }: { payment: Payment, phone: strin
 
       <View style={styles.row}>
         <View style={styles.col}>
-          <Text style={styles.label}>Invoice To:</Text>
+          <Text style={styles.label}>Billed To:</Text>
           <Text style={styles.valueMain}>{payment.memberName}</Text>
           <Text style={styles.valueSub}>Member ID: {payment.membershipId}</Text>
-          {phone && <Text style={styles.valueSub}>Phone: +91 {phone}</Text>}
+          {member?.mobileNumber && <Text style={styles.valueSub}>Phone: +91 {member.mobileNumber}</Text>}
+          {member?.email && <Text style={styles.valueSub}>Email: {member.email}</Text>}
         </View>
         <View style={[styles.col, { alignItems: 'flex-end' }]}>
           <Text style={styles.label}>Invoice Details:</Text>
           <Text style={styles.valueMain}>{payment.invoiceNumber}</Text>
-          <Text style={styles.valueSub}>Date: {payment.transactionDate}</Text>
-          <Text style={styles.valueSub}>Mode: {payment.paymentMode}</Text>
+          <Text style={styles.valueSub}>Payment Date: {payment.transactionDate}</Text>
+          <Text style={styles.valueSub}>Payment Mode: {payment.paymentMode}</Text>
+          <Text style={styles.valueSub}>Status: {payment.status}</Text>
         </View>
       </View>
 
@@ -73,8 +75,18 @@ const InvoicePDFDocument = ({ payment, phone }: { payment: Payment, phone: strin
         <Text style={styles.tableCol1}>Description</Text>
         <Text style={styles.tableCol2}>Total</Text>
       </View>
+      
       <View style={styles.tableRow}>
-        <Text style={styles.tableCell1}>Membership Fee Payment</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.tableCell1Main}>
+            Membership Plan: {member?.planType || 'General Membership'}
+          </Text>
+          {member && (
+            <Text style={styles.tableCell1Sub}>
+              Valid: {member.startDate} to {member.expiryDate}  |  Shift: {member.accessShift}
+            </Text>
+          )}
+        </View>
         <Text style={styles.tableCell2}>Rs {payment.totalFee}</Text>
       </View>
 
@@ -110,13 +122,12 @@ const InvoicePDFDocument = ({ payment, phone }: { payment: Payment, phone: strin
   </Document>
 );
 
-
 // --- MAIN REACT COMPONENT ---
 export const InvoicePreview: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [payment, setPayment] = useState<Payment | null>(null);
-  const [memberPhone, setMemberPhone] = useState<string>(''); 
+  const [member, setMember] = useState<Member | null>(null); 
 
   useEffect(() => {
     if (id) {
@@ -124,7 +135,7 @@ export const InvoicePreview: React.FC = () => {
         setPayment(paymentData);
         if (paymentData && paymentData.memberId) {
           const memberData = await getMember(paymentData.memberId);
-          if (memberData) setMemberPhone(memberData.mobileNumber);
+          if (memberData) setMember(memberData);
         }
       });
     }
@@ -157,7 +168,7 @@ export const InvoicePreview: React.FC = () => {
       {/* Top Header */}
       <div className="flex justify-between items-center mb-6 no-print">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/payments')} className="p-2 -ml-2 rounded-full hover:bg-gray-100"><ArrowLeft className="w-5 h-5 text-[#6B7280]" /></button>
+          <button onClick={() => navigate(-1)} className="p-2 -ml-2 rounded-full hover:bg-gray-100"><ArrowLeft className="w-5 h-5 text-[#6B7280]" /></button>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-[#1F2937]">Invoice Preview</h1>
             <p className="text-sm text-[#6B7280]">Manage membership payment records</p>
@@ -169,8 +180,9 @@ export const InvoicePreview: React.FC = () => {
         
         {/* WEB PREVIEW: Invoice A4 Document */}
         <div id="invoice-print-area" className="flex-1 bg-white p-8 sm:p-12 rounded-none sm:rounded-xl border border-[#E5E7EB] shadow-sm">
+          
           <div className="flex flex-col items-center mb-10 text-center">
-            <img src="/logo.png" alt="MR GYM" className="h-20 w-20 rounded-full mb-3" />
+            <img src="/logo.png" alt="MR GYM" className="h-20 w-20 rounded-full mb-3 shadow-sm border border-gray-100" />
             <h2 className="text-2xl font-bold text-[#1F2937] tracking-wider">MR GYM UNISEX</h2>
             <p className="text-sm text-[#6B7280] mt-1 max-w-md">1st floor, AAA Complex, above Reliance Smart point, Vk Puram, Tirupati, Avilali, Andhra Pradesh 517501</p>
             <p className="text-sm text-[#6B7280] mt-1">Phone: +91 76609 99890 | Email: info@mrgymunisex.com</p>
@@ -178,16 +190,18 @@ export const InvoicePreview: React.FC = () => {
 
           <div className="flex justify-between mb-10 border-t border-b border-[#E5E7EB] py-6">
             <div>
-              <h3 className="text-xs font-bold text-[#9CA3AF] tracking-wider uppercase mb-2">Invoice To:</h3>
+              <h3 className="text-xs font-bold text-[#9CA3AF] tracking-wider uppercase mb-2">Billed To:</h3>
               <p className="font-bold text-[#1F2937] text-lg">{payment.memberName}</p>
               <p className="text-sm text-[#4B5563]">Member ID: {payment.membershipId}</p>
-              {memberPhone && <p className="text-sm text-[#4B5563]">Phone: +91 {memberPhone}</p>}
+              {member?.mobileNumber && <p className="text-sm text-[#4B5563]">Phone: +91 {member.mobileNumber}</p>}
+              {member?.email && <p className="text-sm text-[#4B5563]">Email: {member.email}</p>}
             </div>
             <div className="text-right">
               <h3 className="text-xs font-bold text-[#9CA3AF] tracking-wider uppercase mb-2">Invoice Details:</h3>
               <p className="font-bold text-[#1F2937] text-lg">{payment.invoiceNumber}</p>
-              <p className="text-sm text-[#4B5563]">Date: {payment.transactionDate}</p>
-              <p className="text-sm text-[#4B5563]">Mode: {payment.paymentMode}</p>
+              <p className="text-sm text-[#4B5563]">Payment Date: {payment.transactionDate}</p>
+              <p className="text-sm text-[#4B5563]">Payment Mode: {payment.paymentMode}</p>
+              <p className="text-sm text-[#4B5563]">Status: <span className="font-semibold text-[#1F2937]">{payment.status}</span></p>
             </div>
           </div>
 
@@ -200,8 +214,17 @@ export const InvoicePreview: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-[#E5E7EB]">
               <tr>
-                <td className="py-4 px-4 text-[#4B5563]">Membership Fee Payment</td>
-                <td className="py-4 px-4 text-right text-[#1F2937] font-medium">₹{payment.totalFee}</td>
+                <td className="py-4 px-4">
+                  <p className="font-semibold text-[#1F2937]">
+                    Membership Plan: {member?.planType || 'General Membership'}
+                  </p>
+                  {member && (
+                    <p className="text-xs text-[#6B7280] mt-1">
+                      Valid: <span className="font-medium">{member.startDate}</span> to <span className="font-medium">{member.expiryDate}</span> | Shift: <span className="font-medium">{member.accessShift}</span>
+                    </p>
+                  )}
+                </td>
+                <td className="py-4 px-4 text-right text-[#1F2937] font-medium align-top">₹{payment.totalFee}</td>
               </tr>
             </tbody>
           </table>
@@ -210,7 +233,7 @@ export const InvoicePreview: React.FC = () => {
             <div className="w-64 space-y-3 text-sm">
               <div className="flex justify-between text-[#4B5563]"><span>Subtotal:</span><span>₹{payment.totalFee}</span></div>
               <div className="flex justify-between text-[#4B5563]"><span>Discount:</span><span>₹{payment.discount}</span></div>
-              <div className="flex justify-between font-bold text-lg text-[#1F2937] border-t border-[#E5E7EB] pt-3 mt-3"><span>Amount Paid:</span><span>₹{payment.amountPaid}</span></div>
+              <div className="flex justify-between font-bold text-lg text-[#1F2937] border-t border-[#E5E7EB] pt-3 mt-3"><span>Amount Paid:</span><span className="text-[#16A34A]">₹{payment.amountPaid}</span></div>
               {payment.balanceDue > 0 && <div className="flex justify-between font-bold text-[#DC2626]"><span>Balance Due:</span><span>₹{payment.balanceDue}</span></div>}
             </div>
           </div>
@@ -227,7 +250,7 @@ export const InvoicePreview: React.FC = () => {
             
             {/* REACT-PDF AUTOMATIC DOWNLOAD LINK */}
             <PDFDownloadLink 
-              document={<InvoicePDFDocument payment={payment} phone={memberPhone} />} 
+              document={<InvoicePDFDocument payment={payment} member={member} />} 
               fileName={dynamicFileName}
               className="w-full h-11 bg-[#2563EB] text-white rounded-lg flex items-center justify-center gap-2 font-medium hover:bg-[#1D4ED8] transition-colors"
             >
@@ -244,16 +267,17 @@ export const InvoicePreview: React.FC = () => {
             </button>
 
             {/* EMAIL */}
-            <button className="w-full h-11 bg-white border border-[#E5E7EB] text-[#4B5563] rounded-lg flex items-center justify-center gap-2 font-medium hover:bg-gray-50 transition-colors">
-              <Mail className="h-4 w-4"/> Send Email
+            <button onClick={() => window.location.href = `mailto:${member?.email}?subject=Invoice%20from%20MR%20GYM`} disabled={!member?.email} className="w-full h-11 bg-white border border-[#E5E7EB] text-[#4B5563] rounded-lg flex items-center justify-center gap-2 font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              <Mail className="h-4 w-4"/> {member?.email ? 'Send Email' : 'No Email Added'}
             </button>
             
             {/* DYNAMIC WHATSAPP */}
             <a 
-              href={getPaymentWhatsAppLink(payment, memberPhone)} 
+              href={getPaymentWhatsAppLink(payment, member?.mobileNumber || '')} 
               target="_blank" 
               rel="noreferrer" 
-              className={`w-full h-11 text-white rounded-lg flex items-center justify-center gap-2 font-medium transition-colors ${memberPhone ? 'bg-[#25D366] hover:bg-[#20bd5a]' : 'bg-gray-300 cursor-not-allowed'}`}
+              className={`w-full h-11 text-white rounded-lg flex items-center justify-center gap-2 font-medium transition-colors ${member?.mobileNumber ? 'bg-[#25D366] hover:bg-[#20bd5a]' : 'bg-gray-300 cursor-not-allowed'}`}
+              onClick={(e) => { if(!member?.mobileNumber) e.preventDefault(); }}
             >
               <MessageCircle className="h-4 w-4"/> WhatsApp
             </a>
