@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Search } from 'lucide-react';
-import { getMembers, getMember, type Member } from '../services/members';
+import { getMembers, getMember, updateMember, type Member } from '../services/members';
 import { recordPayment, getPayment, updatePayment } from '../services/payments';
 
 export const RecordPayment: React.FC = () => {
@@ -26,7 +26,6 @@ export const RecordPayment: React.FC = () => {
   useEffect(() => {
     getMembers().then(setMembers);
     
-    // If Editing, load the payment and the associated member
     if (isEditMode && id) {
       getPayment(id).then(async (payment) => {
         if (payment) {
@@ -49,13 +48,18 @@ export const RecordPayment: React.FC = () => {
   const handleSelectMember = (m: Member) => {
     setSelectedMember(m);
     setSearch('');
-    // Auto-fill fee with remaining balance when adding new payment
+    // Auto-fill form with member's actual balance details
     if (!isEditMode) {
-      setFormData(prev => ({ ...prev, totalFee: m.balanceDue, amountPaid: m.balanceDue }));
+      setFormData(prev => ({ 
+        ...prev, 
+        totalFee: m.totalFee || 0,
+        discount: m.discount || 0,
+        amountPaid: m.balanceDue || 0 // Suggests paying off the exact remaining balance
+      }));
     }
   };
 
-  const balanceDue = Math.max(0, formData.totalFee - formData.discount - formData.amountPaid);
+  const invoiceBalanceDue = Math.max(0, formData.totalFee - formData.discount - formData.amountPaid);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,21 +69,32 @@ export const RecordPayment: React.FC = () => {
     try {
       if (isEditMode && id) {
         await updatePayment(id, {
-          memberId: selectedMember.id,
-          memberName: selectedMember.fullName,
-          membershipId: selectedMember.membershipId,
           ...formData,
-          balanceDue
+          balanceDue: invoiceBalanceDue
         });
         navigate(`/payments/invoice/${id}`);
       } else {
+        // 1. Record the Payment
         const paymentId = await recordPayment({
           memberId: selectedMember.id,
           memberName: selectedMember.fullName,
           membershipId: selectedMember.membershipId,
           ...formData,
-          balanceDue
+          balanceDue: invoiceBalanceDue
         });
+
+        // 2. CRITICAL FIX: Update the Member's overall balance in Firestore!
+        const previousAmountPaid = selectedMember.amountPaid || 0;
+        const newTotalAmountPaid = previousAmountPaid + formData.amountPaid;
+        const newMemberBalanceDue = Math.max(0, formData.totalFee - formData.discount - newTotalAmountPaid);
+
+        await updateMember(selectedMember.id, {
+          totalFee: formData.totalFee,
+          discount: formData.discount,
+          amountPaid: newTotalAmountPaid,
+          balanceDue: newMemberBalanceDue
+        }, null);
+
         navigate(`/payments/invoice/${paymentId}`); 
       }
     } catch (error) {
@@ -137,7 +152,7 @@ export const RecordPayment: React.FC = () => {
               </div>
             ) : (
               <div className="bg-gray-50 p-4 rounded-lg border border-[#E5E7EB] relative">
-                {!isEditMode && <button type="button" onClick={() => setSelectedMember(null)} className="absolute top-3 right-3 text-xs text-[#2563EB] font-medium">Change</button>}
+                {!isEditMode && <button type="button" onClick={() => setSelectedMember(null)} className="absolute top-3 right-3 text-xs text-[#2563EB] font-medium hover:underline">Change</button>}
                 <div className="text-sm text-[#6B7280] mb-1">Selected Member:</div>
                 <div className="font-bold text-[#1F2937] text-lg">{selectedMember.fullName}</div>
                 <div className="text-sm text-[#4B5563] mt-2">Membership ID: <span className="font-medium">{selectedMember.membershipId}</span></div>
@@ -160,11 +175,11 @@ export const RecordPayment: React.FC = () => {
               
               <div><label className="block text-xs font-medium text-[#6B7280] mb-1">Total Fee (₹)</label><input type="number" required value={formData.totalFee} onChange={e => setFormData({...formData, totalFee: Number(e.target.value)})} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none focus:border-[#2563EB]" /></div>
               <div><label className="block text-xs font-medium text-[#6B7280] mb-1">Discount (₹)</label><input type="number" value={formData.discount} onChange={e => setFormData({...formData, discount: Number(e.target.value)})} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none focus:border-[#2563EB]" /></div>
-              <div><label className="block text-xs font-medium text-[#6B7280] mb-1">Amount Paid (₹)</label><input type="number" required value={formData.amountPaid} onChange={e => setFormData({...formData, amountPaid: Number(e.target.value)})} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none focus:border-[#2563EB]" /></div>
+              <div><label className="block text-xs font-medium text-[#6B7280] mb-1">Amount Paid TODAY (₹)</label><input type="number" required value={formData.amountPaid} onChange={e => setFormData({...formData, amountPaid: Number(e.target.value)})} className="w-full h-11 px-3 rounded-lg border border-[#E5E7EB] outline-none focus:border-[#2563EB]" /></div>
               
               <div className="bg-[#2563EB]/5 border border-[#2563EB]/20 rounded-lg p-3 flex flex-col justify-center">
-                <div className="text-xs font-medium text-[#2563EB] mb-1">Balance Due</div>
-                <div className="text-xl font-bold text-[#1F2937]">₹{balanceDue}</div>
+                <div className="text-xs font-medium text-[#2563EB] mb-1">Remaining Balance Due</div>
+                <div className="text-xl font-bold text-[#1F2937]">₹{invoiceBalanceDue}</div>
               </div>
             </div>
 

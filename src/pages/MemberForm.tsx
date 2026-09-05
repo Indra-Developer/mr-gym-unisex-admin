@@ -99,7 +99,9 @@ export const MemberForm: React.FC = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      // Base payload without profilePicUrl (to avoid Firestore undefined error)
+      const selectedPlan = plans.find(p => p.name === formData.planType);
+      const planPrice = selectedPlan ? selectedPlan.price : 0;
+
       const payload: any = { 
         ...formData, 
         membershipId,
@@ -110,11 +112,12 @@ export const MemberForm: React.FC = () => {
         await updateMember(id, payload, profilePic);
         navigate(`/members/${id}`); 
       } else {
-        // Set profilePicUrl to null explicitly for new members
+        // Set financials dynamically based on chosen plan
         payload.profilePicUrl = null;
-        payload.balanceDue = 0; // Initialize with 0 balance
+        payload.totalFee = planPrice; 
+        payload.discount = 0;
         payload.amountPaid = 0;
-        payload.totalFee = 0;
+        payload.balanceDue = planPrice; // Member starts with full balance due
         
         await addMember(payload, profilePic);
         navigate('/members');
